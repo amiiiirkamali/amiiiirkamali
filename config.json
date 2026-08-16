@@ -1,0 +1,11 @@
+{
+  "username": "amiiiirkamali",
+  "name": "Amirreza Kamali",
+  "wordmark": "AMIR",
+  "role": "Backend Developer · AI Integration Specialist",
+  "location": "Tehran, Iran",
+  "status": "Building scalable backend systems and AI-powered agents.",
+  "website": "https://linkedin.com/in/amiiiirkamali",
+  "photo": "assets/profile-source.png",
+  "skills": ["Python", "Django", "FastAPI", "Next.js", "Docker", "PyTorch"]
+}
