@@ -529,15 +529,22 @@ def identity_svg(cfg: dict) -> str:
 def metric_card(x: float, y: float, label: str, value: str, color: str, ratio: float, delay: float) -> str:
     width, bar = 260.0, 216.0
     filled = max(14.0, bar * max(0.0, min(1.0, ratio)) ** 0.6)
+    # NOTE: the animation must live on an INNER <g> that has no positional
+    # "transform" attribute of its own. If a single <g> carries both
+    # transform="translate(x y)" AND a CSS animation that sets `transform`
+    # (like .rise does), the CSS transform *replaces* the attribute instead
+    # of composing with it, so the card snaps to (0,0) once the animation
+    # runs — which is exactly the "card jumped to the corner" bug.
     return (
-        f'<g transform="translate({x:.0f} {y:.0f})" class="rise" style="animation-delay:{delay:.2f}s">'
+        f'<g transform="translate({x:.0f} {y:.0f})">'
+        f'<g class="rise" style="animation-delay:{delay:.2f}s">'
         f'<rect width="{width:.0f}" height="100" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".7"/>'
         f'<rect x="0" y="0" width="{width:.0f}" height="100" rx="18" fill="none" stroke="{color}" stroke-opacity=".18"/>'
         f'<text x="22" y="28" class="label">{escape(label)}</text>'
         f'<text x="22" y="66" class="metric" fill="{color}">{escape(value)}</text>'
         f'<rect x="22" y="80" width="{bar:.0f}" height="7" rx="4" fill="{TRACK}"/>'
         f'<rect x="22" y="80" width="{filled:.0f}" height="7" rx="4" fill="{color}" class="bar" '
-        f'style="animation-delay:{delay + .1:.2f}s"/></g>'
+        f'style="animation-delay:{delay + .1:.2f}s"/></g></g>'
     )
 
 
@@ -714,14 +721,18 @@ def arsenal_svg(cfg: dict) -> str:
                 f'class="bar" style="animation-delay:{index * .09 + item_index * .06:.2f}s"/>'
                 f'<text x="384" y="{iy}" text-anchor="end" class="pct" fill="{accent}">{level}</text>'
             )
+        # same fix as metric_card: keep the positional transform on an outer
+        # <g> and put class="rise" on an inner <g> so the CSS animation
+        # doesn't blow away the translate(x y) placement.
         cards.append(
-            f'<g transform="translate({x} {y})" class="rise" style="animation-delay:{index * .09:.2f}s">'
+            f'<g transform="translate({x} {y})">'
+            f'<g class="rise" style="animation-delay:{index * .09:.2f}s">'
             f'<rect width="{card_w}" height="{card_h}" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".6"/>'
             f'<rect width="4" height="{card_h}" rx="2" fill="{accent}" opacity=".85"/>'
             f'<text x="18" y="28" class="label" fill="{accent}">{escape(str(group.get("group", "")))}</text>'
             f'<circle cx="378" cy="23" r="4" fill="{accent}" class="pulse"/>'
             f'<rect x="18" y="36" width="{card_w - 36}" height="1" fill="{EDGE}" opacity=".25"/>'
-            f'{"".join(rows)}</g>'
+            f'{"".join(rows)}</g></g>'
         )
 
     css = (
@@ -791,8 +802,11 @@ def missions_svg(cfg: dict) -> str:
             f'<text x="18" y="{78 + line_index * 14}" class="body">{escape(line)}</text>'
             for line_index, line in enumerate(wrap(project.get("note", ""), 10.5, 212, 3))
         )
+        # same fix again: outer <g> for translate(x y), inner <g class="rise">
+        # for the fade/rise animation.
         cards.append(
-            f'<g transform="translate({x} {y})" class="rise" style="animation-delay:{index * .07:.2f}s">'
+            f'<g transform="translate({x} {y})">'
+            f'<g class="rise" style="animation-delay:{index * .07:.2f}s">'
             f'<rect width="{card_w}" height="{card_h}" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".6"/>'
             f'<rect width="4" height="{card_h}" rx="2" fill="{accent}" opacity=".9"/>'
             f'<text x="18" y="26" class="idx" fill="{accent}">{index + 1:02d}</text>'
@@ -800,7 +814,7 @@ def missions_svg(cfg: dict) -> str:
             f'<text x="18" y="47" class="proj">{escape(trim(project.get("name", ""), 26))}</text>'
             f'<text x="18" y="61" class="mono" font-size="9">{escape(trim(project.get("link", ""), 34))}</text>'
             f'{note_lines}'
-            f'{chips(project.get("tags", []), 18, 120, size=7.5, accent=accent, gap=5, max_width=228)}</g>'
+            f'{chips(project.get("tags", []), 18, 120, size=7.5, accent=accent, gap=5, max_width=228)}</g></g>'
         )
 
     css = (
