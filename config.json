@@ -5,7 +5,187 @@
   "role": "Backend Developer · AI Integration Specialist",
   "location": "Tehran, Iran",
   "status": "Building scalable backend systems and AI-powered agents.",
+  "email": "amirrezakamali5382@gmail.com",
   "website": "https://linkedin.com/in/amiiiirkamali",
+  "github": "https://github.com/amiiiirkamali",
   "photo": "assets/profile-source.png",
-  "skills": ["Python", "Django", "FastAPI", "Next.js", "Docker", "PyTorch"]
+  "education": "B.Sc. Computer Engineering · Quchan University of Technology · 2025",
+  "skills": ["Python", "Django", "FastAPI", "Next.js", "Docker", "PyTorch"],
+  "headline_metrics": [
+    { "label": "YEARS SHIPPING", "value": "3+" },
+    { "label": "PROD SYSTEMS", "value": "8" },
+    { "label": "DOMAINS", "value": "FinTech · AI · Gov" }
+  ],
+  "stack": [
+    {
+      "group": "LANGUAGES",
+      "accent": "#f2dc56",
+      "items": [
+        { "name": "Python", "level": 95 },
+        { "name": "C++", "level": 70 },
+        { "name": "Dart", "level": 62 },
+        { "name": "SQL", "level": 80 },
+        { "name": "VHDL", "level": 66 }
+      ]
+    },
+    {
+      "group": "BACKEND",
+      "accent": "#43ead3",
+      "items": [
+        { "name": "Django", "level": 93 },
+        { "name": "DRF", "level": 90 },
+        { "name": "FastAPI", "level": 88 },
+        { "name": "PostgreSQL", "level": 82 },
+        { "name": "Redis", "level": 76 }
+      ]
+    },
+    {
+      "group": "AI / ML",
+      "accent": "#9b6cff",
+      "items": [
+        { "name": "LangChain", "level": 86 },
+        { "name": "OpenAI API", "level": 90 },
+        { "name": "PyTorch", "level": 72 },
+        { "name": "TensorFlow", "level": 66 },
+        { "name": "AI Agents", "level": 88 }
+      ]
+    },
+    {
+      "group": "FRONTEND",
+      "accent": "#4387ff",
+      "items": [
+        { "name": "Next.js", "level": 84 },
+        { "name": "Node.js", "level": 74 },
+        { "name": "Flutter", "level": 64 },
+        { "name": "Prisma", "level": 70 }
+      ]
+    },
+    {
+      "group": "PLATFORM",
+      "accent": "#56f73a",
+      "items": [
+        { "name": "Docker", "level": 85 },
+        { "name": "Linux", "level": 88 },
+        { "name": "Git / CI", "level": 86 },
+        { "name": "Bash", "level": 80 },
+        { "name": "Server Admin", "level": 78 }
+      ]
+    },
+    {
+      "group": "HARDWARE",
+      "accent": "#ff6b48",
+      "items": [
+        { "name": "FPGA", "level": 68 },
+        { "name": "Xilinx ISE", "level": 64 },
+        { "name": "Vivado", "level": 60 }
+      ]
+    }
+  ],
+  "experience": [
+    {
+      "role": "Freelance Software Developer",
+      "org": "Self-employed",
+      "period": "JUL 2024 — PRESENT",
+      "accent": "#43ead3",
+      "note": "Backend & full-stack delivery for clients incl. Snapp and Blu Bank; AI integration and agent systems.",
+      "tags": ["Python", "AI Agents", "Automation"]
+    },
+    {
+      "role": "Backend Developer (Python/Django)",
+      "org": "Mayatek",
+      "period": "JUL 2024 — PRESENT",
+      "accent": "#9b6cff",
+      "note": "Backend architecture and REST APIs for scalable web apps; database design and optimization.",
+      "tags": ["Django", "DRF", "PostgreSQL"]
+    },
+    {
+      "role": "FPGA Design Intern",
+      "org": "Pajoohesh Novin Rayaneh (PNR)",
+      "period": "JUL 2024 — OCT 2024",
+      "accent": "#ff6b48",
+      "note": "Digital design on programmable hardware: counters, ALUs and memory blocks in VHDL.",
+      "tags": ["VHDL", "Xilinx ISE", "Vivado"]
+    },
+    {
+      "role": "Backend Developer (Python)",
+      "org": "Dotin",
+      "period": "JAN 2024 — JUN 2024",
+      "accent": "#4387ff",
+      "note": "Enterprise banking services, secure API integrations and PostgreSQL query tuning.",
+      "tags": ["REST", "PostgreSQL", "Testing"]
+    },
+    {
+      "role": "Software Engineer Intern",
+      "org": "Tosan Techno",
+      "period": "SEP 2023 — DEC 2023",
+      "accent": "#32d8ef",
+      "note": "Internal banking software with Python and SQL; unit tests, Docker and CI/CD in an Agile team.",
+      "tags": ["Python", "SQL", "CI/CD"]
+    }
+  ],
+  "projects": [
+    {
+      "name": "Feesood",
+      "link": "feesood.com",
+      "accent": "#f2dc56",
+      "note": "Real-time market platform for crypto, gold and precious metals with live dashboards.",
+      "tags": ["Next.js", "Redis", "Prisma"]
+    },
+    {
+      "name": "Samane 1515",
+      "link": "1515.ir",
+      "accent": "#43ead3",
+      "note": "National judiciary system allocating expert consultants to legal cases. In production.",
+      "tags": ["Django", "Security", "Gov"]
+    },
+    {
+      "name": "Maho",
+      "link": "maho.com",
+      "accent": "#9b6cff",
+      "note": "AI agents marketplace hosting specialized agents across domains, built to scale.",
+      "tags": ["AI Agents", "Marketplace"]
+    },
+    {
+      "name": "Genome",
+      "link": "genome.com",
+      "accent": "#32d8ef",
+      "note": "AI character creation platform turning natural-language descriptions into structured characters.",
+      "tags": ["LLM", "Pipeline", "UX"]
+    },
+    {
+      "name": "Ubofit",
+      "link": "ubofit.com",
+      "accent": "#4387ff",
+      "note": "Full platform built from scratch — frontend, backend and AI personalization modules.",
+      "tags": ["Next.js", "Django", "AI"]
+    },
+    {
+      "name": "Smart Contract Platform",
+      "link": "contractsite.com",
+      "accent": "#56f73a",
+      "note": "LLM-powered drafting of property, land and vehicle agreements between two parties.",
+      "tags": ["LLM", "LegalTech"]
+    },
+    {
+      "name": "Piazology",
+      "link": "piazology.ir",
+      "accent": "#ff6b48",
+      "note": "Full-stack platform for Zaad Studio with complete schema and REST API architecture.",
+      "tags": ["Next.js", "Django", "REST"]
+    },
+    {
+      "name": "FPGA Plate Detection",
+      "link": "github.com/amiiiirkamali",
+      "accent": "#ffa23a",
+      "note": "Hardware-only license plate detection pipeline implemented in VHDL on FPGA.",
+      "tags": ["VHDL", "Vision", "FPGA"]
+    },
+    {
+      "name": "Crypto Security Review",
+      "link": "linkedin.com/in/amiiiirkamali",
+      "accent": "#c0f",
+      "note": "Technical article on threats, cryptographic protocols and wallet risk mitigation.",
+      "tags": ["Research", "Security"]
+    }
+  ]
 }

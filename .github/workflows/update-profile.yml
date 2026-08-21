@@ -1,28 +1,54 @@
-name: Update Aqua Launch
+name: Aqua Launch — refresh profile assets
+
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "config.json"
+      - "scripts/**"
+      - ".github/workflows/aqua-launch.yml"
   schedule:
+    # 05:43 UTC daily — offset from the hour so the runner queue is short
     - cron: "43 5 * * *"
+
 permissions:
   contents: write
+
+concurrency:
+  group: aqua-launch
+  cancel-in-progress: true
+
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r scripts/requirements.txt
+
       - name: Generate profile assets
         env:
-          GITHUB_TOKEN: ${{ secrets.PROFILE_TOKEN }}
+          # PROFILE_TOKEN (classic PAT, scope: read:user) unlocks the GraphQL
+          # contribution calendar. Falls back to the built-in token + HTML scrape.
+          GITHUB_TOKEN: ${{ secrets.PROFILE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_USERNAME: ${{ github.repository_owner }}
-        run: |
-          python -m pip install -r scripts/requirements.txt
-          python scripts/generate.py
+        run: python scripts/generate.py
+
       - name: Commit refreshed assets
         run: |
-          if git diff --quiet -- assets; then exit 0; fi
+          if git diff --quiet -- assets; then
+            echo "No visual change — skipping commit."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add assets

@@ -1,11 +1,20 @@
-"""Generate the animated Aqua Launch GitHub profile assets.
+"""Generate the animated **Aqua Launch v2** GitHub profile assets.
 
-The generator uses GitHub's REST API for profile/repository data and GraphQL
-for the contribution calendar when GITHUB_TOKEN is available. A public HTML
-fallback keeps local generation usable without a token.
+Six SVG panels are rendered from `config.json` + live GitHub data:
 
-    python scripts/generate.py          # live public data
-    python scripts/generate.py --demo   # deterministic offline preview
+    assets/identity.svg       ASCII portrait, animated wordmark, contact rail
+    assets/signal.svg         live stats cards + language stack
+    assets/contributions.svg  contribution calendar with orbital scanner
+    assets/arsenal.svg        grouped tech stack with proficiency bars
+    assets/trajectory.svg     career timeline
+    assets/missions.svg       featured project grid
+
+Data sources: GitHub REST (profile/repos), GraphQL (contribution calendar when
+GITHUB_TOKEN is present) and a public HTML fallback for token-less runs.
+
+    python scripts/generate.py            # live public data
+    python scripts/generate.py --demo     # deterministic offline preview
+    python scripts/generate.py --only signal missions
 """
 
 from __future__ import annotations
@@ -22,25 +31,39 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from PIL import Image, ImageEnhance, ImageOps
+try:  # Pillow is only required for the ASCII portrait.
+    from PIL import Image, ImageEnhance, ImageOps
+except ImportError:  # pragma: no cover - portrait degrades to the sigil panel.
+    Image = ImageEnhance = ImageOps = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 
+# ---------------------------------------------------------------------------
+# design tokens
+# ---------------------------------------------------------------------------
 OUTER = "#0b1d20"
 BG = "#071416"
 PANEL = "#0a2928"
 PANEL_2 = "#0b2227"
+SUNKEN = "#081d1f"
 HAIR = "#168f82"
+EDGE = "#1ca596"
+EDGE_SOFT = "#176f68"
+TRACK = "#203b40"
 TEAL = "#43ead3"
 MINT = "#83ffe8"
 BLUE = "#4387ff"
 PURPLE = "#9b6cff"
+CYAN = "#32d8ef"
 YELLOW = "#f2dc56"
 ORANGE = "#ff6b48"
 GREEN = "#56f73a"
 TEXT = "#dcfff7"
 MUTED = "#79aaa4"
+PALETTE = [YELLOW, BLUE, PURPLE, GREEN, ORANGE, CYAN, TEAL]
+
+W = 900  # every panel shares one canvas width so the README stacks cleanly
 
 GLYPHS = {
     "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
@@ -83,10 +106,70 @@ GLYPHS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# text helpers
+# ---------------------------------------------------------------------------
 def load_config() -> dict:
     return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 
 
+def trim(value: object, size: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= size else text[: size - 1].rstrip() + "…"
+
+
+def text_width(text: str, size: float, bold: bool = False) -> float:
+    """Cheap metric estimate — good enough to lay out chips and rails."""
+    factor = 0.545 if bold else 0.505
+    return len(text) * size * factor
+
+
+def wrap(text: str, size: float, max_width: float, max_lines: int = 3) -> list[str]:
+    words = " ".join(str(text or "").split()).split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if text_width(candidate, size) <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+        if len(lines) == max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and words:
+        joined = " ".join(lines)
+        if len(joined) < len(" ".join(words)):
+            last = lines[-1]
+            while last and text_width(last + "…", size) > max_width:
+                last = last[:-1]
+            lines[-1] = last.rstrip(" ,.") + "…"
+    return lines
+
+
+def chips(items: list[str], x: float, y: float, size: float = 8.0, accent: str = EDGE_SOFT,
+          gap: float = 6.0, max_width: float | None = None) -> str:
+    """Render a row of pill tags, dropping any that overflow max_width."""
+    out, cursor = [], x
+    for item in items:
+        label = trim(item, 18)
+        width = text_width(label, size, True) + 16
+        if max_width is not None and cursor + width > x + max_width:
+            break
+        out.append(
+            f'<g transform="translate({cursor:.1f} {y:.1f})">'
+            f'<rect width="{width:.1f}" height="17" rx="8.5" fill="#0d3636" stroke="{accent}" stroke-opacity=".55"/>'
+            f'<text x="{width / 2:.1f}" y="12" text-anchor="middle" class="chip">{escape(label)}</text></g>'
+        )
+        cursor += width + gap
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# GitHub data layer
+# ---------------------------------------------------------------------------
 def request_json(url: str, *, payload: dict | None = None) -> object:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "aqua-launch-profile"}
     token = os.environ.get("GITHUB_TOKEN")
@@ -117,6 +200,7 @@ def profile_data(username: str) -> dict:
         "followers": int(user.get("followers", 0)),
         "following": int(user.get("following", 0)),
         "stars": sum(int(repo.get("stargazers_count", 0)) for repo in original),
+        "forks": sum(int(repo.get("forks_count", 0)) for repo in original),
         "languages": sorted(languages.items(), key=lambda item: item[1], reverse=True)[:5],
     }
 
@@ -124,17 +208,21 @@ def profile_data(username: str) -> dict:
 def contributions_graphql(username: str) -> dict | None:
     if not os.environ.get("GITHUB_TOKEN"):
         return None
-    query = """query($login:String!){user(login:$login){contributionsCollection{contributionCalendar{totalContributions weeks{contributionDays{date contributionCount contributionLevel}}}}}}"""
+    query = (
+        "query($login:String!){user(login:$login){contributionsCollection{contributionCalendar"
+        "{totalContributions weeks{contributionDays{date contributionCount contributionLevel}}}}}}"
+    )
     result = request_json("https://api.github.com/graphql", payload={"query": query, "variables": {"login": username}})
     if not isinstance(result, dict) or result.get("errors"):
         return None
     try:
         calendar = result["data"]["user"]["contributionsCollection"]["contributionCalendar"]
-        days = []
         levels = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
-        for week in calendar["weeks"]:
-            for item in week["contributionDays"]:
-                days.append({"date": item["date"], "count": int(item["contributionCount"]), "level": levels.get(item["contributionLevel"], 0)})
+        days = [
+            {"date": item["date"], "count": int(item["contributionCount"]), "level": levels.get(item["contributionLevel"], 0)}
+            for week in calendar["weeks"]
+            for item in week["contributionDays"]
+        ]
         return {"total": int(calendar["totalContributions"]), "days": days}
     except (KeyError, TypeError):
         return None
@@ -142,7 +230,9 @@ def contributions_graphql(username: str) -> dict | None:
 
 def contributions_html(username: str) -> dict:
     url = f"https://github.com/users/{username}/contributions"
-    request = urllib.request.Request(url, headers={"User-Agent": "aqua-launch-profile", "X-Requested-With": "XMLHttpRequest"})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "aqua-launch-profile", "X-Requested-With": "XMLHttpRequest"}
+    )
     with urllib.request.urlopen(request, timeout=30) as response:
         source = response.read().decode("utf-8", errors="replace")
 
@@ -172,6 +262,22 @@ def contributions_html(username: str) -> dict:
     return {"total": total, "days": sorted(days, key=lambda item: item["date"])}
 
 
+def streaks(days: list[dict]) -> tuple[int, int]:
+    """Return (current streak, longest streak) in days."""
+    ordered = sorted(days, key=lambda item: item["date"])
+    longest = run = 0
+    for item in ordered:
+        run = run + 1 if int(item.get("count", 0)) > 0 else 0
+        longest = max(longest, run)
+    current = 0
+    for item in reversed(ordered):
+        if int(item.get("count", 0)) > 0:
+            current += 1
+        elif current or item is ordered[-1]:
+            break
+    return current, longest
+
+
 def demo_data() -> tuple[dict, dict]:
     rng = random.Random(430)
     end = date.today()
@@ -179,28 +285,92 @@ def demo_data() -> tuple[dict, dict]:
     days = []
     for offset in range(371):
         iso = start + timedelta(days=offset)
-        active = rng.random() > (0.69 if offset < 190 else 0.54)
+        active = rng.random() > (0.69 if offset < 190 else 0.5)
         level = rng.choices([1, 2, 3, 4], weights=[44, 30, 18, 8])[0] if active else 0
         days.append({"date": iso.isoformat(), "count": rng.randint(level, level * 4) if level else 0, "level": level})
     profile = {
-        "public_repos": 86,
-        "followers": 34,
-        "following": 18,
-        "stars": 119,
-        "languages": [["JavaScript", 35], ["TypeScript", 30], ["CSS", 19], ["C#", 6], ["HTML", 4]],
+        "public_repos": 19,
+        "followers": 11,
+        "following": 14,
+        "stars": 14,
+        "forks": 6,
+        "languages": [["Python", 11], ["C++", 3], ["Dart", 2], ["C", 1], ["HTML", 1]],
     }
-    return profile, {"total": 430, "days": days}
+    return profile, {"total": sum(day["count"] for day in days), "days": days}
 
 
-def trim(value: object, size: int) -> str:
-    text = " ".join(str(value or "").split())
-    return text if len(text) <= size else text[: size - 1].rstrip() + "…"
+# ---------------------------------------------------------------------------
+# shared chrome
+# ---------------------------------------------------------------------------
+def base_style() -> str:
+    return (
+        ".title{font:700 22px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__TEXT__}"
+        ".display{font:700 28px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__TEXT__}"
+        ".label{font:700 9px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__TEAL__;letter-spacing:1.6px}"
+        ".sub{font:700 9px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__MUTED__;letter-spacing:1.4px}"
+        ".body{font:11px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__MUTED__}"
+        ".mono{font:10px ui-monospace,Consolas,monospace;fill:__MUTED__}"
+        ".chip{font:700 8px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:__TEXT__}"
+        ".rise{animation:rise .6s cubic-bezier(.32,.72,0,1) both}"
+        ".fade{animation:fade .7s ease both}"
+        ".bar{transform-origin:left;animation:grow .9s cubic-bezier(.32,.72,0,1) both}"
+        ".pulse{animation:pulse 3.2s ease-in-out infinite}"
+        "@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}"
+        "@keyframes fade{from{opacity:0}to{opacity:1}}"
+        "@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}"
+        "@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}"
+        "@media(prefers-reduced-motion:reduce){*{animation:none!important}}"
+    ).replace("__TEXT__", TEXT).replace("__TEAL__", TEAL).replace("__MUTED__", MUTED)
 
 
-def portrait_lines(cfg: dict, cols: int = 66, max_rows: int = 50) -> list[str]:
-    path = ROOT / cfg["photo"]
-    if not path.exists():
-        raise RuntimeError(f"Profile photo not found: {path}")
+def gradient_defs(seed: str) -> str:
+    return (
+        f'<linearGradient id="shell" x1="0" y1="0" x2="1" y2="1">'
+        f'<stop stop-color="#0b625b"/><stop offset=".55" stop-color="#0c3b3d"/><stop offset="1" stop-color="#2d4f88"/>'
+        f'</linearGradient>'
+        f'<linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0">'
+        f'<stop stop-color="{TEAL}" stop-opacity="0"/><stop offset=".5" stop-color="{TEAL}" stop-opacity=".55"/>'
+        f'<stop offset="1" stop-color="{TEAL}" stop-opacity="0"/></linearGradient>'
+        f'<radialGradient id="aura"><stop stop-color="{TEAL}" stop-opacity=".2"/>'
+        f'<stop offset="1" stop-color="{TEAL}" stop-opacity="0"/></radialGradient>'
+        f'<!-- {escape(seed)} -->'
+    )
+
+
+def frame(height: int, *, panel_fill: str = PANEL) -> str:
+    """Outer bezel + inner panel shared by every card."""
+    return (
+        f'<rect width="{W}" height="{height}" rx="24" fill="{OUTER}"/>'
+        f'<rect x="6" y="6" width="{W - 12}" height="{height - 12}" rx="20" fill="url(#shell)" stroke="{HAIR}"/>'
+        f'<rect x="22" y="22" width="{W - 44}" height="{height - 44}" rx="18" fill="{panel_fill}" stroke="{EDGE}"/>'
+    )
+
+
+def header(title: str, label: str, right: str = "") -> str:
+    right_node = f'<text x="{W - 46}" y="56" text-anchor="end" class="label">{escape(right)}</text>' if right else ""
+    return (
+        f'<text x="46" y="58" class="title">{escape(title)}</text>'
+        f'<text x="47" y="76" class="label">{escape(label)}</text>'
+        f'<rect x="46" y="86" width="{W - 92}" height="1" fill="url(#sheen)"/>'
+        f"{right_node}"
+    )
+
+
+def svg_open(height: int, aria: str, extra_defs: str = "", extra_css: str = "") -> str:
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{height}" viewBox="0 0 {W} {height}" '
+        f'role="img" aria-label="{escape(aria)}">'
+        f'<defs>{gradient_defs(aria)}{extra_defs}<style>{base_style()}{extra_css}</style></defs>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# panel 1 — identity
+# ---------------------------------------------------------------------------
+def portrait_lines(cfg: dict, cols: int = 60, max_rows: int = 44) -> list[str] | None:
+    path = ROOT / cfg.get("photo", "")
+    if Image is None or not cfg.get("photo") or not path.exists():
+        return None
     with Image.open(path) as source:
         image = ImageOps.autocontrast(ImageEnhance.Contrast(ImageOps.grayscale(source)).enhance(1.25))
         rows = min(max_rows, max(1, round(image.height / image.width * cols * 0.78)))
@@ -213,14 +383,13 @@ def portrait_lines(cfg: dict, cols: int = 66, max_rows: int = 50) -> list[str]:
         chars = []
         for value in pixels[row * cols : (row + 1) * cols]:
             normalized = (value - low) / max(1, high - low)
-            index = min(len(ramp) - 1, int((1.0 - normalized) * len(ramp)))
-            chars.append(ramp[index])
+            chars.append(ramp[min(len(ramp) - 1, int((1.0 - normalized) * len(ramp)))])
         lines.append("".join(chars))
     return lines
 
 
 def ascii_lines(word: str, alphabet: str, scale_x: int = 2, scale_y: int = 2) -> list[str]:
-    clean = "".join(char for char in word.upper() if char in GLYPHS)[:8] or "HELLO"
+    clean = "".join(char for char in word.upper() if char in GLYPHS)[:8] or "DEV"
     rows = []
     for row in range(7):
         chunks = []
@@ -231,136 +400,461 @@ def ascii_lines(word: str, alphabet: str, scale_x: int = 2, scale_y: int = 2) ->
                 for cell_index, bit in enumerate(glyph)
             )
             chunks.append(chunk)
-        expanded = "   ".join(chunks)
-        rows.extend([expanded] * scale_y)
+        rows.extend(["   ".join(chunks)] * scale_y)
     return rows
 
 
-def shared_style() -> str:
-    return """.display{font:700 28px 'Trebuchet MS',sans-serif;fill:__TEXT__}.title{font:700 24px 'Trebuchet MS',sans-serif;fill:__TEXT__}.label{font:700 9px 'Trebuchet MS',sans-serif;fill:__TEAL__;letter-spacing:1.6px}.body{font:12px 'Trebuchet MS',sans-serif;fill:__MUTED__}.mono{font:10px ui-monospace,Consolas,monospace;fill:__MUTED__}@media(prefers-reduced-motion:reduce){*{animation:none!important}}""".replace("__TEXT__", TEXT).replace("__TEAL__", TEAL).replace("__MUTED__", MUTED)
+def sigil(cfg: dict) -> str:
+    """Fallback artwork when no portrait image is available."""
+    initials = "".join(part[0] for part in str(cfg["name"]).split()[:2]).upper()
+    rings = "".join(
+        f'<circle cx="167" cy="216" r="{34 + index * 22}" fill="none" stroke="{PALETTE[index % len(PALETTE)]}" '
+        f'stroke-opacity=".38" stroke-dasharray="{6 + index * 3} {10 + index * 2}">'
+        f'<animateTransform attributeName="transform" type="rotate" from="{index * 40} 167 216" '
+        f'to="{index * 40 + (360 if index % 2 == 0 else -360)} 167 216" dur="{16 + index * 6}s" repeatCount="indefinite"/>'
+        f"</circle>"
+        for index in range(5)
+    )
+    return (
+        f'{rings}<circle cx="167" cy="216" r="30" fill="{PANEL_2}" stroke="{TEAL}"/>'
+        f'<text x="167" y="224" text-anchor="middle" class="display" fill="{MINT}">{escape(initials)}</text>'
+        f'<text x="167" y="330" text-anchor="middle" class="mono">portrait offline · add assets/profile-source.png</text>'
+    )
 
 
 def identity_svg(cfg: dict) -> str:
+    height = 400
     portrait = portrait_lines(cfg)
     portrait_defs, portrait_body = [], []
     char_w, line_h, font_size = 4.0, 5.3, 5.9
-    portrait_x, portrait_y = 43.0, 87.0
-    for row, raw in enumerate(portrait):
+    px, py = 47.0, 104.0
+    for row, raw in enumerate(portrait or []):
         text = raw.rstrip()
         if not text.strip():
             continue
         left = len(text) - len(text.lstrip())
         segment = text[left:]
-        x = portrait_x + left * char_w
-        y = portrait_y + row * line_h
+        x = px + left * char_w
+        y = py + row * line_h
         width = len(segment) * char_w
         begin = row * 0.038
-        portrait_defs.append(f'<clipPath id="portrait-row-{row}"><rect x="{x:.1f}" y="{y - 4.8:.1f}" width="{width:.1f}" height="{line_h + 1:.1f}"><animate attributeName="width" from="0" to="{width:.1f}" begin="{begin:.3f}s" dur=".32s" fill="freeze"/></rect></clipPath>')
-        portrait_body.append(f'<g clip-path="url(#portrait-row-{row})"><text x="{x:.1f}" y="{y:.1f}" textLength="{width:.1f}" lengthAdjust="spacing" xml:space="preserve">{escape(segment)}</text></g>')
-        portrait_body.append(f'<rect x="{x:.1f}" y="{y - 4.8:.1f}" width="{char_w:.1f}" height="{line_h:.1f}" fill="{MINT}" opacity="0"><set attributeName="opacity" to=".9" begin="{begin:.3f}s"/><animate attributeName="x" from="{x:.1f}" to="{x + width:.1f}" begin="{begin:.3f}s" dur=".32s" fill="freeze"/><set attributeName="opacity" to="0" begin="{begin + .32:.3f}s"/></rect>')
+        portrait_defs.append(
+            f'<clipPath id="prow-{row}"><rect x="{x:.1f}" y="{y - 4.8:.1f}" width="{width:.1f}" height="{line_h + 1:.1f}">'
+            f'<animate attributeName="width" from="0" to="{width:.1f}" begin="{begin:.3f}s" dur=".32s" fill="freeze"/>'
+            f"</rect></clipPath>"
+        )
+        portrait_body.append(
+            f'<g clip-path="url(#prow-{row})"><text x="{x:.1f}" y="{y:.1f}" textLength="{width:.1f}" '
+            f'lengthAdjust="spacing" xml:space="preserve">{escape(segment)}</text></g>'
+            f'<rect x="{x:.1f}" y="{y - 4.8:.1f}" width="{char_w:.1f}" height="{line_h:.1f}" fill="{MINT}" opacity="0">'
+            f'<set attributeName="opacity" to=".9" begin="{begin:.3f}s"/>'
+            f'<animate attributeName="x" from="{x:.1f}" to="{x + width:.1f}" begin="{begin:.3f}s" dur=".32s" fill="freeze"/>'
+            f'<set attributeName="opacity" to="0" begin="{begin + .32:.3f}s"/></rect>'
+        )
+    art = "".join(portrait_body) if portrait else sigil(cfg)
 
-    first = ascii_lines(cfg.get("wordmark") or cfg["name"].split()[0], "$s+")
-    second = ascii_lines(cfg.get("wordmark") or cfg["name"].split()[0], "#*=")
-    line_a = "".join(f'<text x="0" y="{20 + row * 14.2:.1f}" textLength="510" lengthAdjust="spacingAndGlyphs" xml:space="preserve">{escape(line)}</text>' for row, line in enumerate(first))
-    line_b = "".join(f'<text x="0" y="{20 + row * 14.2:.1f}" textLength="510" lengthAdjust="spacingAndGlyphs" xml:space="preserve">{escape(line)}</text>' for row, line in enumerate(second))
-    skills = "".join(f'<g transform="translate({337 + index * 87} 329)"><rect width="78" height="20" rx="10" fill="#0d3636" stroke="#17675f"/><text x="39" y="14" text-anchor="middle" class="chip">{escape(skill)}</text></g>' for index, skill in enumerate(cfg.get("skills", [])[:6]))
-    css = shared_style() + f""".portrait-ascii{{font:700 {font_size}px ui-monospace,Consolas,monospace;fill:__MINT__}}.ascii{{font:700 11px ui-monospace,Consolas,monospace;fill:__MINT__;letter-spacing:.4px}}.chip{{font:700 8px 'Trebuchet MS',sans-serif;fill:__TEXT__}}.phase-a{{animation:phaseA 3.4s cubic-bezier(.32,.72,0,1) infinite}}.phase-b{{animation:phaseB 3.4s cubic-bezier(.32,.72,0,1) infinite}}@keyframes phaseA{{0%,42%{{opacity:1}}58%,92%{{opacity:0}}100%{{opacity:1}}}}@keyframes phaseB{{0%,42%{{opacity:0}}58%,92%{{opacity:1}}100%{{opacity:0}}}}""".replace("__MINT__", MINT).replace("__TEXT__", TEXT)
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="900" height="380" viewBox="0 0 900 380" role="img" aria-label="Animated ASCII identity for {escape(cfg['name'])}">
-<defs><linearGradient id="shell" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0b5e58"/><stop offset=".56" stop-color="#0c3438"/><stop offset="1" stop-color="#284e88"/></linearGradient><radialGradient id="aura"><stop stop-color="{TEAL}" stop-opacity=".22"/><stop offset="1" stop-color="{TEAL}" stop-opacity="0"/></radialGradient>{''.join(portrait_defs)}<clipPath id="type"><rect x="0" y="0" width="0" height="225"><animate attributeName="width" from="0" to="520" dur="2.5s" calcMode="spline" keySplines=".32 .72 0 1" fill="freeze"/></rect></clipPath><style>{css}</style></defs>
-<rect width="900" height="380" rx="24" fill="{OUTER}"/><rect x="6" y="6" width="888" height="368" rx="20" fill="url(#shell)" stroke="{HAIR}"/><rect x="18" y="18" width="864" height="344" rx="17" fill="{BG}" stroke="#1a7269"/><circle cx="230" cy="185" r="180" fill="url(#aura)"/>
-<circle cx="38" cy="37" r="5" fill="#ff665d"/><circle cx="56" cy="37" r="5" fill="#f5c451"/><circle cx="74" cy="37" r="5" fill="#46d468"/><text x="450" y="41" text-anchor="middle" class="mono">{escape(cfg['username'].lower())}@github: ~$ ./wordmark --animate</text>
-<rect x="32" y="57" width="286" height="292" rx="22" fill="#081d1f" stroke="#176f68"/><text x="48" y="78" class="label">PORTRAIT.ASCII / @{escape(cfg['username'].upper())}</text><g class="portrait-ascii">{''.join(portrait_body)}</g>
-<rect x="329" y="57" width="539" height="222" rx="22" fill="#081d1f" stroke="#176f68"/><g transform="translate(343 67)" clip-path="url(#type)" class="ascii"><g class="phase-a">{line_a}</g><g class="phase-b">{line_b}</g></g>
-<text x="337" y="305" class="body">{escape(trim(cfg['role'], 58))} · {escape(cfg['location'])}</text>{skills}
-<rect x="342" y="65" width="6" height="15" fill="{MINT}" opacity="0"><set attributeName="opacity" to="1" begin="0s"/><animate attributeName="x" from="342" to="852" dur="2.5s" calcMode="spline" keySplines=".32 .72 0 1" fill="freeze"/><set attributeName="opacity" to="0" begin="2.5s"/></rect>
-</svg>'''
+    wordmark = cfg.get("wordmark") or str(cfg["name"]).split()[0]
+    phase_a = "".join(
+        f'<text x="0" y="{16 + row * 12.6:.1f}" textLength="516" lengthAdjust="spacingAndGlyphs" '
+        f'xml:space="preserve">{escape(line)}</text>'
+        for row, line in enumerate(ascii_lines(wordmark, "$s+"))
+    )
+    phase_b = "".join(
+        f'<text x="0" y="{16 + row * 12.6:.1f}" textLength="516" lengthAdjust="spacingAndGlyphs" '
+        f'xml:space="preserve">{escape(line)}</text>'
+        for row, line in enumerate(ascii_lines(wordmark, "#*="))
+    )
+
+    contact = " · ".join(
+        part for part in [
+            cfg.get("email"),
+            str(cfg.get("website", "")).replace("https://", ""),
+            str(cfg.get("github", "")).replace("https://", ""),
+        ] if part
+    )
+    skill_row = chips(cfg.get("skills", [])[:6], 306, 318, accent=EDGE, max_width=552)
+
+    css = (
+        f".pascii{{font:700 {font_size}px ui-monospace,Consolas,monospace;fill:{MINT}}}"
+        f".ascii{{font:700 10px ui-monospace,Consolas,monospace;fill:{MINT};letter-spacing:.4px}}"
+        f".name{{font:700 21px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:{TEXT}}}"
+        ".pa{animation:pa 3.4s cubic-bezier(.32,.72,0,1) infinite}"
+        ".pb{animation:pb 3.4s cubic-bezier(.32,.72,0,1) infinite}"
+        "@keyframes pa{0%,42%{opacity:1}58%,92%{opacity:0}100%{opacity:1}}"
+        "@keyframes pb{0%,42%{opacity:0}58%,92%{opacity:1}100%{opacity:0}}"
+    )
+    defs = "".join(portrait_defs) + (
+        '<clipPath id="type"><rect x="0" y="0" width="524" height="200">'
+        '<animate attributeName="width" from="0" to="524" dur="2.4s" calcMode="spline" '
+        'keySplines=".32 .72 0 1" fill="freeze"/></rect></clipPath>'
+    )
+
+    return (
+        svg_open(height, f"Animated ASCII identity for {cfg['name']}", defs, css)
+        + frame(height, panel_fill=BG)
+        + f'<circle cx="200" cy="210" r="185" fill="url(#aura)"/>'
+        # terminal bar
+        + '<circle cx="46" cy="46" r="5" fill="#ff665d"/><circle cx="64" cy="46" r="5" fill="#f5c451"/>'
+          '<circle cx="82" cy="46" r="5" fill="#46d468"/>'
+        + f'<text x="450" y="50" text-anchor="middle" class="mono">{escape(cfg["username"].lower())}'
+          f'@github: ~$ ./aqua-launch --render identity</text>'
+        + f'<circle cx="836" cy="46" r="4" fill="{GREEN}" class="pulse"/>'
+        + f'<text x="828" y="50" text-anchor="end" class="sub">OPEN TO WORK</text>'
+        + f'<rect x="42" y="62" width="{W - 84}" height="1" fill="url(#sheen)"/>'
+        # portrait card
+        + f'<rect x="42" y="74" width="250" height="286" rx="20" fill="{SUNKEN}" stroke="{EDGE_SOFT}"/>'
+        + f'<text x="58" y="94" class="label">PORTRAIT.ASCII / @{escape(cfg["username"].upper())}</text>'
+        + f'<g class="pascii">{art}</g>'
+        # wordmark card
+        + f'<rect x="306" y="74" width="552" height="190" rx="20" fill="{SUNKEN}" stroke="{EDGE_SOFT}"/>'
+        + f'<g transform="translate(320 82)" clip-path="url(#type)" class="ascii">'
+          f'<g class="pa">{phase_a}</g><g class="pb">{phase_b}</g></g>'
+        + f'<rect x="319" y="80" width="6" height="14" fill="{MINT}" opacity="0">'
+          f'<set attributeName="opacity" to="1" begin="0s"/>'
+          f'<animate attributeName="x" from="319" to="843" dur="2.4s" calcMode="spline" '
+          f'keySplines=".32 .72 0 1" fill="freeze"/><set attributeName="opacity" to="0" begin="2.4s"/></rect>'
+        # identity block
+        + f'<text x="306" y="292" class="name">{escape(cfg["name"])}</text>'
+        + f'<text x="306" y="308" class="body">{escape(trim(cfg["role"], 62))} · {escape(cfg["location"])}</text>'
+        + skill_row
+        + f'<text x="306" y="352" class="mono" font-size="9">{escape(trim(contact, 92))}</text>'
+        + f'<text x="306" y="368" class="mono" font-size="9">{escape(trim(cfg.get("education", ""), 92))}</text>'
+        + "</svg>"
+    )
 
 
+# ---------------------------------------------------------------------------
+# panel 2 — signal
+# ---------------------------------------------------------------------------
+def metric_card(x: float, y: float, label: str, value: str, color: str, ratio: float, delay: float) -> str:
+    width, bar = 260.0, 216.0
+    filled = max(14.0, bar * max(0.0, min(1.0, ratio)) ** 0.6)
+    return (
+        f'<g transform="translate({x:.0f} {y:.0f})" class="rise" style="animation-delay:{delay:.2f}s">'
+        f'<rect width="{width:.0f}" height="100" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".7"/>'
+        f'<rect x="0" y="0" width="{width:.0f}" height="100" rx="18" fill="none" stroke="{color}" stroke-opacity=".18"/>'
+        f'<text x="22" y="28" class="label">{escape(label)}</text>'
+        f'<text x="22" y="66" class="metric" fill="{color}">{escape(value)}</text>'
+        f'<rect x="22" y="80" width="{bar:.0f}" height="7" rx="4" fill="{TRACK}"/>'
+        f'<rect x="22" y="80" width="{filled:.0f}" height="7" rx="4" fill="{color}" class="bar" '
+        f'style="animation-delay:{delay + .1:.2f}s"/></g>'
+    )
+
+
+def signal_svg(cfg: dict, profile: dict, contribution: dict) -> str:
+    height = 580
+    current, longest = streaks(contribution["days"])
+    metrics = [
+        ("CONTRIBUTIONS", contribution["total"], PURPLE),
+        ("STARS EARNED", profile["stars"], TEAL),
+        ("REPOSITORIES", profile["public_repos"], BLUE),
+        ("FOLLOWERS", profile["followers"], CYAN),
+        ("CURRENT STREAK", current, GREEN),
+        ("LONGEST STREAK", longest, ORANGE),
+    ]
+    peak = max(1, max(int(value) for _, value, _ in metrics))
+    cards = "".join(
+        metric_card(
+            42 + (index % 3) * 278,
+            100 + (index // 3) * 116,
+            label,
+            f"{value:,}",
+            color,
+            int(value) / peak,
+            index * 0.08,
+        )
+        for index, (label, value, color) in enumerate(metrics)
+    )
+
+    languages = profile.get("languages") or [(skill, 1) for skill in cfg.get("skills", [])[:5]]
+    total = max(1, sum(int(count) for _, count in languages))
+    rows = []
+    for index, (language, count) in enumerate(languages[:5]):
+        y = 400 + index * 26
+        share = int(count) / total
+        color = PALETTE[index % len(PALETTE)]
+        rows.append(
+            f'<circle cx="52" cy="{y - 4}" r="5" fill="{color}"/>'
+            f'<text x="70" y="{y}" class="lang">{escape(str(language))}</text>'
+            f'<text x="250" y="{y}" text-anchor="end" class="pct" fill="{color}">{round(share * 100)}%</text>'
+            f'<rect x="270" y="{y - 11}" width="{W - 316}" height="9" rx="5" fill="{TRACK}"/>'
+            f'<rect x="270" y="{y - 11}" width="{max(14, int((W - 316) * share)):d}" height="9" rx="5" fill="{color}" '
+            f'class="bar" style="animation-delay:{.5 + index * .08:.2f}s"/>'
+        )
+
+    css = (
+        f".metric{{font:700 30px 'Trebuchet MS','Segoe UI',Verdana,sans-serif}}"
+        f".lang{{font:700 12px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:{TEXT}}}"
+        ".pct{font:700 11px ui-monospace,Consolas,monospace}"
+    )
+    return (
+        svg_open(height, f"Profile signal and language stack for {cfg['username']}", "", css)
+        + frame(height)
+        + header("Profile Signal", f"LIVE GITHUB TELEMETRY / @{cfg['username'].upper()}", "> SIGNAL.SCAN")
+        + cards
+        + f'<rect x="46" y="352" width="{W - 92}" height="1" fill="url(#sheen)"/>'
+        + f'<text x="46" y="382" class="title">Language Stack</text>'
+        + f'<text x="{W - 46}" y="382" text-anchor="end" class="label">REPOSITORY-WEIGHTED</text>'
+        + "".join(rows)
+        + f'<text x="46" y="546" class="mono">{escape(trim(cfg["status"], 70))}</text>'
+        + f'<text x="{W - 46}" y="546" text-anchor="end" class="mono">auto-refreshed daily via GitHub Actions</text>'
+        + "</svg>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# panel 3 — contributions
+# ---------------------------------------------------------------------------
 def calendar_layout(days: list[dict]) -> tuple[list[tuple[dict, int, int]], int]:
     if not days:
         return [], 53
-    parsed = [(date.fromisoformat(item["date"]), item) for item in days]
-    parsed.sort(key=lambda item: item[0])
+    parsed = sorted(((date.fromisoformat(item["date"]), item) for item in days), key=lambda pair: pair[0])
     origin = parsed[0][0] - timedelta(days=(parsed[0][0].weekday() + 1) % 7)
-    placed = []
-    for current, item in parsed:
-        col = (current - origin).days // 7
-        row = (current.weekday() + 1) % 7
-        placed.append((item, col, row))
+    placed = [(item, (current - origin).days // 7, (current.weekday() + 1) % 7) for current, item in parsed]
     return placed, max(col for _, col, _ in placed) + 1
 
 
 def contributions_svg(cfg: dict, contribution: dict) -> str:
+    height = 330
     placed, weeks = calendar_layout(contribution["days"][-371:])
     cell, gap = 10, 3
     pitch = cell + gap
     grid_width = weeks * pitch - gap
-    grid_x = (900 - grid_width) // 2
+    grid_x = (W - grid_width) // 2 + 12
+    grid_y = 122
     colors = ["#102f30", "#15504c", "#167b70", "#1aae9b", TEAL]
+
     nodes = []
-    for index, (item, col, row) in enumerate(placed):
+    months = []
+    seen_months: set[str] = set()
+    for item, col, row in placed:
         level = min(4, int(item.get("level", 0)))
         delay = ((col + row) % 18) * 0.025
-        nodes.append(f'<rect x="{grid_x + col * pitch}" y="{91 + row * pitch}" width="{cell}" height="{cell}" rx="2" fill="{colors[level]}" class="cell" style="animation-delay:{delay:.3f}s"><title>{escape(item["date"])}: {item.get("count", 0)} contributions</title></rect>')
-    css = shared_style() + """.cell{animation:cellIn .55s cubic-bezier(.32,.72,0,1) both}.ship{animation:travel 12s cubic-bezier(.65,0,.35,1) infinite}.shot-a{animation:shoot 1.7s cubic-bezier(.32,.72,0,1) infinite}.shot-b{animation:shoot 1.7s .72s cubic-bezier(.32,.72,0,1) infinite}@keyframes cellIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}@keyframes travel{0%,100%{transform:translateX(0)}50%{transform:translateX(715px)}}@keyframes shoot{0%{opacity:0;transform:translateY(0) scaleY(.4)}18%{opacity:1}75%,100%{opacity:0;transform:translateY(-58px) scaleY(1)}}"""
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="900" height="292" viewBox="0 0 900 292" role="img" aria-label="Contribution activity for {escape(cfg['username'])}">
-<defs><linearGradient id="shell" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0b655d"/><stop offset=".58" stop-color="#0c3a3c"/><stop offset="1" stop-color="#2e518c"/></linearGradient><style>{css}</style></defs>
-<rect width="900" height="292" rx="24" fill="{OUTER}"/><rect x="6" y="6" width="888" height="280" rx="20" fill="url(#shell)" stroke="{HAIR}"/><rect x="28" y="28" width="844" height="236" rx="18" fill="{PANEL}" stroke="#24a596"/>
-<text x="48" y="60" class="title">Contribution Activity</text><text x="49" y="79" class="label">{contribution['total']} CONTRIBUTIONS IN THE LAST YEAR</text><text x="712" y="62" class="mono">LESS</text>{''.join(f'<rect x="{750 + i * 14}" y="52" width="10" height="10" rx="2" fill="{color}"/>' for i, color in enumerate(colors))}<text x="847" y="62" text-anchor="end" class="mono">MORE</text>
-{''.join(nodes)}
-<path d="M65 235H835" stroke="#174541" stroke-dasharray="2 7"/>
-<g class="ship"><g transform="translate(72 240)"><g class="shot-a"><rect x="12" y="-21" width="3" height="14" rx="2" fill="{MINT}"/><circle cx="13.5" cy="-24" r="3" fill="{MINT}"/></g><g class="shot-b"><rect x="12" y="-21" width="3" height="14" rx="2" fill="{BLUE}"/><circle cx="13.5" cy="-24" r="3" fill="{BLUE}"/></g><path d="M13 0L25 27l-12-6-12 6z" fill="{MINT}" stroke="#d9fff8"/><path d="M13 9L18 23H8z" fill="{BLUE}"/><path d="M5 24l-4 9 9-6M21 24l4 9-9-6" fill="none" stroke="{TEAL}" stroke-width="2"/><path d="M9 29l4 10 4-10" fill="{ORANGE}" opacity=".85"/></g></g>
-<text x="847" y="252" text-anchor="end" class="label">ORBITAL COMMIT SCAN / LIVE</text>
-</svg>'''
+        nodes.append(
+            f'<rect x="{grid_x + col * pitch}" y="{grid_y + row * pitch}" width="{cell}" height="{cell}" rx="2" '
+            f'fill="{colors[level]}" class="cell" style="animation-delay:{delay:.3f}s">'
+            f'<title>{escape(item["date"])}: {item.get("count", 0)} contributions</title></rect>'
+        )
+        stamp = date.fromisoformat(item["date"])
+        key = f"{stamp.year}-{stamp.month}"
+        if key not in seen_months and stamp.day <= 7 and col < weeks - 1:
+            seen_months.add(key)
+            months.append(
+                f'<text x="{grid_x + col * pitch}" y="{grid_y - 8}" class="mono" font-size="9">'
+                f'{stamp.strftime("%b").upper()}</text>'
+            )
+
+    weekdays = "".join(
+        f'<text x="{grid_x - 10}" y="{grid_y + index * pitch + 9}" text-anchor="end" class="mono" font-size="8">{name}</text>'
+        for index, name in ((1, "MON"), (3, "WED"), (5, "FRI"))
+    )
+    legend = "".join(f'<rect x="{712 + i * 14}" y="52" width="10" height="10" rx="2" fill="{color}"/>' for i, color in enumerate(colors))
+    current, longest = streaks(contribution["days"])
+    busiest = max(contribution["days"], key=lambda item: int(item.get("count", 0)), default={"date": "—", "count": 0})
+    stats = (
+        f'<text x="46" y="238" class="mono">CURRENT STREAK <tspan fill="{GREEN}">{current}d</tspan>'
+        f'   ·   LONGEST <tspan fill="{ORANGE}">{longest}d</tspan>'
+        f'   ·   PEAK DAY <tspan fill="{TEAL}">{escape(str(busiest.get("date", "—")))}</tspan>'
+        f' ({busiest.get("count", 0)})</text>'
+    )
+
+    css = (
+        ".cell{animation:cellIn .55s cubic-bezier(.32,.72,0,1) both}"
+        ".ship{animation:travel 13s cubic-bezier(.65,0,.35,1) infinite}"
+        ".shotA{animation:shoot 1.7s cubic-bezier(.32,.72,0,1) infinite}"
+        ".shotB{animation:shoot 1.7s .72s cubic-bezier(.32,.72,0,1) infinite}"
+        "@keyframes cellIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}"
+        "@keyframes travel{0%,100%{transform:translateX(0)}50%{transform:translateX(700px)}}"
+        "@keyframes shoot{0%{opacity:0;transform:translateY(0) scaleY(.4)}18%{opacity:1}"
+        "75%,100%{opacity:0;transform:translateY(-58px) scaleY(1)}}"
+    )
+    return (
+        svg_open(height, f"Contribution activity for {cfg['username']}", "", css)
+        + frame(height)
+        + header("Contribution Activity", f"{contribution['total']:,} CONTRIBUTIONS IN THE LAST YEAR")
+        + f'<text x="674" y="62" class="mono">LESS</text>{legend}'
+        + f'<text x="{W - 46}" y="62" text-anchor="end" class="mono">MORE</text>'
+        + "".join(months) + weekdays + "".join(nodes)
+        + stats
+        + f'<path d="M66 272H834" stroke="#174541" stroke-dasharray="2 7"/>'
+        + '<g class="ship"><g transform="translate(74 276)">'
+          f'<g class="shotA"><rect x="12" y="-21" width="3" height="14" rx="2" fill="{MINT}"/>'
+          f'<circle cx="13.5" cy="-24" r="3" fill="{MINT}"/></g>'
+          f'<g class="shotB"><rect x="12" y="-21" width="3" height="14" rx="2" fill="{BLUE}"/>'
+          f'<circle cx="13.5" cy="-24" r="3" fill="{BLUE}"/></g>'
+          f'<path d="M13 0L25 27l-12-6-12 6z" fill="{MINT}" stroke="#d9fff8"/>'
+          f'<path d="M13 9L18 23H8z" fill="{BLUE}"/>'
+          f'<path d="M5 24l-4 9 9-6M21 24l4 9-9-6" fill="none" stroke="{TEAL}" stroke-width="2"/>'
+          f'<path d="M9 29l4 10 4-10" fill="{ORANGE}" opacity=".85"/></g></g>'
+        + f'<text x="{W - 46}" y="300" text-anchor="end" class="label">ORBITAL COMMIT SCAN / LIVE</text>'
+        + "</svg>"
+    )
 
 
-def signal_svg(cfg: dict, profile: dict, contribution: dict) -> str:
-    metrics = [("STARS", profile["stars"], TEAL), ("CONTRIBUTIONS", contribution["total"], PURPLE), ("REPOSITORIES", profile["public_repos"], BLUE), ("FOLLOWERS", profile["followers"], "#32d8ef")]
-    max_metric = max(1, max(value for _, value, _ in metrics))
+# ---------------------------------------------------------------------------
+# panel 4 — arsenal (grouped stack)
+# ---------------------------------------------------------------------------
+def arsenal_svg(cfg: dict) -> str:
+    groups = cfg.get("stack", [])[:6]
+    height = 690
+    card_w, card_h = 400, 170
     cards = []
-    for index, (label, value, color) in enumerate(metrics):
-        x = 42 + index * 211
-        progress = max(18, int(132 * (value / max_metric) ** 0.5))
-        cards.append(f'<g transform="translate({x} 83)"><rect width="190" height="112" rx="18" fill="{PANEL_2}" stroke="#1aa595"/><text x="22" y="30" class="label">{label}</text><text x="22" y="70" class="metric" fill="{color}"><tspan fill="{color}">{value}</tspan></text><rect x="22" y="88" width="144" height="7" rx="4" fill="#203b40"/><rect x="22" y="88" width="{progress}" height="7" rx="4" fill="{color}" class="bar" style="animation-delay:{index * .1:.2f}s"/></g>')
-    languages = profile.get("languages") or [(skill, 1) for skill in cfg.get("skills", [])[:5]]
-    total = max(1, sum(int(count) for _, count in languages))
-    language_nodes = []
-    palette = [YELLOW, BLUE, PURPLE, GREEN, ORANGE]
-    for index, (language, count) in enumerate(languages[:5]):
-        y = 362 + index * 29
-        percent = round(int(count) / total * 100)
-        width = max(16, int(460 * int(count) / total))
-        color = palette[index]
-        language_nodes.append(f'<circle cx="62" cy="{y - 4}" r="5" fill="{color}"/><text x="82" y="{y}" class="language">{escape(language)}</text><text x="285" y="{y}" text-anchor="end" class="percent" fill="{color}"><tspan fill="{color}">{percent}%</tspan></text><rect x="315" y="{y - 12}" width="510" height="9" rx="5" fill="#224043"/><rect x="315" y="{y - 12}" width="{width}" height="9" rx="5" fill="{color}" class="bar" style="animation-delay:{.15 + index * .08:.2f}s"/>')
-    css = shared_style() + """.metric{font:700 34px 'Trebuchet MS',sans-serif}.language{font:700 12px 'Trebuchet MS',sans-serif;fill:__TEXT__}.percent{font:700 11px ui-monospace,Consolas,monospace}.bar{transform-origin:left;animation:grow .85s cubic-bezier(.32,.72,0,1) both}@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}""".replace("__TEXT__", TEXT)
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520" role="img" aria-label="Profile signal and language stack for {escape(cfg['username'])}">
-<defs><linearGradient id="shell" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0b625b"/><stop offset=".55" stop-color="#0c3b3d"/><stop offset="1" stop-color="#2d4f88"/></linearGradient><style>{css}</style></defs>
-<rect width="900" height="520" rx="24" fill="{OUTER}"/><rect x="6" y="6" width="888" height="238" rx="20" fill="url(#shell)" stroke="{HAIR}"/><rect x="24" y="24" width="852" height="202" rx="18" fill="{PANEL}" stroke="#1ca596"/><text x="42" y="61" class="title">Profile Signal</text><text x="43" y="78" class="label">LIVE GITHUB STATS / @{escape(cfg['username'].upper())}</text>{''.join(cards)}
-<rect x="6" y="258" width="888" height="256" rx="20" fill="url(#shell)" stroke="{HAIR}"/><rect x="24" y="276" width="852" height="220" rx="18" fill="{PANEL}" stroke="#1ca596"/><text x="43" y="312" class="title">Language Stack</text><text x="43" y="330" class="label">REPOSITORY-WEIGHTED TECHNOLOGIES</text><text x="849" y="312" text-anchor="end" class="label">&gt; STACK.SCAN</text>{''.join(language_nodes)}
-<text x="849" y="509" text-anchor="end" class="mono">{escape(trim(cfg['status'], 62))}</text>
-</svg>'''
+    for index, group in enumerate(groups):
+        x = 42 + (index % 2) * (card_w + 16)
+        y = 100 + (index // 2) * (card_h + 16)
+        accent = group.get("accent", PALETTE[index % len(PALETTE)])
+        rows = []
+        for item_index, item in enumerate(group.get("items", [])[:5]):
+            iy = 52 + item_index * 23
+            level = max(0, min(100, int(item.get("level", 50))))
+            rows.append(
+                f'<text x="18" y="{iy}" class="skill">{escape(str(item.get("name", "")))}</text>'
+                f'<rect x="150" y="{iy - 9}" width="190" height="8" rx="4" fill="{TRACK}"/>'
+                f'<rect x="150" y="{iy - 9}" width="{round(190 * level / 100)}" height="8" rx="4" fill="{accent}" '
+                f'class="bar" style="animation-delay:{index * .09 + item_index * .06:.2f}s"/>'
+                f'<text x="384" y="{iy}" text-anchor="end" class="pct" fill="{accent}">{level}</text>'
+            )
+        cards.append(
+            f'<g transform="translate({x} {y})" class="rise" style="animation-delay:{index * .09:.2f}s">'
+            f'<rect width="{card_w}" height="{card_h}" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".6"/>'
+            f'<rect width="4" height="{card_h}" rx="2" fill="{accent}" opacity=".85"/>'
+            f'<text x="18" y="28" class="label" fill="{accent}">{escape(str(group.get("group", "")))}</text>'
+            f'<circle cx="378" cy="23" r="4" fill="{accent}" class="pulse"/>'
+            f'<rect x="18" y="36" width="{card_w - 36}" height="1" fill="{EDGE}" opacity=".25"/>'
+            f'{"".join(rows)}</g>'
+        )
+
+    css = (
+        f".skill{{font:700 11px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:{TEXT}}}"
+        ".pct{font:700 9px ui-monospace,Consolas,monospace}"
+    )
+    return (
+        svg_open(height, f"Technology arsenal for {cfg['name']}", "", css)
+        + frame(height)
+        + header("Arsenal", "TOOLING GROUPED BY DOMAIN · SELF-ASSESSED DEPTH", "> STACK.MAP")
+        + "".join(cards)
+        + f'<text x="46" y="662" class="mono">{escape(trim(cfg.get("education", ""), 54))}</text>'
+        + f'<text x="{W - 46}" y="662" text-anchor="end" class="mono">{escape(trim(cfg["role"], 52))}</text>'
+        + "</svg>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# panel 5 — trajectory (career timeline)
+# ---------------------------------------------------------------------------
+def trajectory_svg(cfg: dict) -> str:
+    roles = cfg.get("experience", [])[:5]
+    height = 470
+    rail_top, step = 104, 66
+    rows = []
+    for index, role in enumerate(roles):
+        y = rail_top + index * step
+        accent = role.get("accent", PALETTE[index % len(PALETTE)])
+        node_y = y + 18
+        rows.append(
+            f'<g class="rise" style="animation-delay:{index * .1:.2f}s">'
+            f'<circle cx="64" cy="{node_y}" r="9" fill="{PANEL_2}" stroke="{accent}" stroke-width="2"/>'
+            f'<circle cx="64" cy="{node_y}" r="3.5" fill="{accent}"/>'
+            f'<text x="92" y="{y + 16}" class="role">{escape(trim(role.get("role", ""), 46))}'
+            f'<tspan fill="{accent}"> @ {escape(trim(role.get("org", ""), 30))}</tspan></text>'
+            f'<text x="{W - 46}" y="{y + 16}" text-anchor="end" class="mono" fill="{accent}">'
+            f'{escape(str(role.get("period", "")))}</text>'
+            f'<text x="92" y="{y + 33}" class="body">{escape(trim(role.get("note", ""), 108))}</text>'
+            f'{chips(role.get("tags", []), 92, y + 41, accent=accent, max_width=520)}</g>'
+        )
+
+    css = f".role{{font:700 13px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:{TEXT}}}"
+    return (
+        svg_open(height, f"Career trajectory for {cfg['name']}", "", css)
+        + frame(height)
+        + header("Trajectory", "ROLES · BANKING, PRODUCT AND HARDWARE ENGINEERING", "> CAREER.LOG")
+        + f'<path d="M64 {rail_top + 10}V{rail_top + (len(roles) - 1) * step + 18}" stroke="{EDGE}" '
+          f'stroke-opacity=".4" stroke-dasharray="3 6"/>'
+        + "".join(rows)
+        + "</svg>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# panel 6 — missions (project grid)
+# ---------------------------------------------------------------------------
+def missions_svg(cfg: dict) -> str:
+    projects = cfg.get("projects", [])[:9]
+    height = 620
+    card_w, card_h = 260, 150
+    cards = []
+    for index, project in enumerate(projects):
+        x = 42 + (index % 3) * (card_w + 18)
+        y = 100 + (index // 3) * (card_h + 16)
+        accent = project.get("accent", PALETTE[index % len(PALETTE)])
+        note_lines = "".join(
+            f'<text x="18" y="{78 + line_index * 14}" class="body">{escape(line)}</text>'
+            for line_index, line in enumerate(wrap(project.get("note", ""), 10.5, 212, 3))
+        )
+        cards.append(
+            f'<g transform="translate({x} {y})" class="rise" style="animation-delay:{index * .07:.2f}s">'
+            f'<rect width="{card_w}" height="{card_h}" rx="18" fill="{PANEL_2}" stroke="{EDGE}" stroke-opacity=".6"/>'
+            f'<rect width="4" height="{card_h}" rx="2" fill="{accent}" opacity=".9"/>'
+            f'<text x="18" y="26" class="idx" fill="{accent}">{index + 1:02d}</text>'
+            f'<circle cx="{card_w - 20}" cy="21" r="4" fill="{accent}" opacity=".8"/>'
+            f'<text x="18" y="47" class="proj">{escape(trim(project.get("name", ""), 26))}</text>'
+            f'<text x="18" y="61" class="mono" font-size="9">{escape(trim(project.get("link", ""), 34))}</text>'
+            f'{note_lines}'
+            f'{chips(project.get("tags", []), 18, 120, size=7.5, accent=accent, gap=5, max_width=228)}</g>'
+        )
+
+    css = (
+        f".proj{{font:700 13px 'Trebuchet MS','Segoe UI',Verdana,sans-serif;fill:{TEXT}}}"
+        ".idx{font:700 9px ui-monospace,Consolas,monospace;letter-spacing:1px}"
+    )
+    return (
+        svg_open(height, f"Featured project missions by {cfg['name']}", "", css)
+        + frame(height)
+        + header("Missions", "PRODUCTION SYSTEMS · PLATFORMS · RESEARCH", "> PROJECT.INDEX")
+        + "".join(cards)
+        + "</svg>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# entrypoint
+# ---------------------------------------------------------------------------
+BUILDERS = ("identity", "signal", "contributions", "arsenal", "trajectory", "missions")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Render the Aqua Launch profile assets.")
     parser.add_argument("--demo", action="store_true", help="use deterministic offline data")
+    parser.add_argument("--only", nargs="+", choices=BUILDERS, help="render a subset of panels")
     args = parser.parse_args()
+
     cfg = load_config()
     username = os.environ.get("GH_USERNAME") or os.environ.get("GITHUB_REPOSITORY_OWNER") or cfg["username"]
     cfg["username"] = username
-    if args.demo:
+
+    static_only = set(args.only or BUILDERS) <= {"identity", "arsenal", "trajectory", "missions"}
+    if args.demo or static_only:
         profile, contribution = demo_data()
     else:
         try:
             profile = profile_data(username)
             contribution = contributions_graphql(username) or contributions_html(username)
-        except (urllib.error.URLError, RuntimeError) as exc:
+        except (urllib.error.URLError, RuntimeError, OSError) as exc:
             raise SystemExit(f"GitHub data request failed: {exc}. Use --demo for an offline preview.")
+
+    renderers = {
+        "identity": lambda: identity_svg(cfg),
+        "signal": lambda: signal_svg(cfg, profile, contribution),
+        "contributions": lambda: contributions_svg(cfg, contribution),
+        "arsenal": lambda: arsenal_svg(cfg),
+        "trajectory": lambda: trajectory_svg(cfg),
+        "missions": lambda: missions_svg(cfg),
+    }
     ASSETS.mkdir(exist_ok=True)
-    (ASSETS / "identity.svg").write_text(identity_svg(cfg), encoding="utf-8")
-    (ASSETS / "contributions.svg").write_text(contributions_svg(cfg, contribution), encoding="utf-8")
-    (ASSETS / "signal.svg").write_text(signal_svg(cfg, profile, contribution), encoding="utf-8")
-    print(f"Generated Aqua Launch assets for @{username}")
+    for name in args.only or BUILDERS:
+        (ASSETS / f"{name}.svg").write_text(renderers[name](), encoding="utf-8")
+        print(f"  · assets/{name}.svg")
+    print(f"Aqua Launch assets generated for @{username}")
     return 0
 
 
