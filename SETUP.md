@@ -1,4 +1,4 @@
-# راه‌اندازی Aqua Launch (پروفایل گیت‌هاب)
+# راه‌اندازی Pretty GitHub (پروفایل گیت‌هاب)
 
 ## ۱. ساخت ریپازیتوری پروفایل
 
@@ -29,7 +29,7 @@ amiiiirkamali/
 │   ├── generate.py
 │   └── requirements.txt
 └── .github/workflows/
-    └── aqua-launch.yml
+    └── update-profile.yml
 ```
 
 > عکس پروفایل: یک PNG مربعی (مثلاً ۶۰۰×۶۰۰) با پس‌زمینه‌ی ساده و کنتراست بالا بگذار در
@@ -52,10 +52,10 @@ amiiiirkamali/
 python -m pip install -r scripts/requirements.txt
 python scripts/generate.py --demo     # پیش‌نمایش آفلاین با داده‌ی نمونه
 python scripts/generate.py            # داده‌ی واقعی گیت‌هاب
-git add . && git commit -m "feat: aqua launch profile" && git push
+git add . && git commit -m "feat: pretty github profile" && git push
 ```
 
-بعدش در تب **Actions** ریپو، ورک‌فلو `Aqua Launch` را یک‌بار دستی با **Run workflow** اجرا کن.
+بعدش در تب **Actions** ریپو، ورک‌فلو `Pretty GitHub` را یک‌بار دستی با **Run workflow** اجرا کن.
 از آن به بعد هر روز ساعت ۵:۴۳ UTC (۹:۱۳ صبح به وقت تهران) خودکار آپدیت می‌شود.
 
 ## ۵. شخصی‌سازی

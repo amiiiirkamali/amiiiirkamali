@@ -1,4 +1,4 @@
-"""Generate the animated **Aqua Launch v2** GitHub profile assets.
+"""Generate the animated **Pretty GitHub** profile assets.
 
 Six SVG panels are rendered from `config.json` + live GitHub data:
 
@@ -171,7 +171,7 @@ def chips(items: list[str], x: float, y: float, size: float = 8.0, accent: str =
 # GitHub data layer
 # ---------------------------------------------------------------------------
 def request_json(url: str, *, payload: dict | None = None) -> object:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "aqua-launch-profile"}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "pretty-github-profile"}
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -231,7 +231,7 @@ def contributions_graphql(username: str) -> dict | None:
 def contributions_html(username: str) -> dict:
     url = f"https://github.com/users/{username}/contributions"
     request = urllib.request.Request(
-        url, headers={"User-Agent": "aqua-launch-profile", "X-Requested-With": "XMLHttpRequest"}
+        url, headers={"User-Agent": "pretty-github-profile", "X-Requested-With": "XMLHttpRequest"}
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         source = response.read().decode("utf-8", errors="replace")
@@ -497,7 +497,7 @@ def identity_svg(cfg: dict) -> str:
         + '<circle cx="46" cy="46" r="5" fill="#ff665d"/><circle cx="64" cy="46" r="5" fill="#f5c451"/>'
           '<circle cx="82" cy="46" r="5" fill="#46d468"/>'
         + f'<text x="450" y="50" text-anchor="middle" class="mono">{escape(cfg["username"].lower())}'
-          f'@github: ~$ ./aqua-launch --render identity</text>'
+          f'@github: ~$ ./pretty-github --render identity</text>'
         + f'<circle cx="836" cy="46" r="4" fill="{GREEN}" class="pulse"/>'
         + f'<text x="828" y="50" text-anchor="end" class="sub">OPEN TO WORK</text>'
         + f'<rect x="42" y="62" width="{W - 84}" height="1" fill="url(#sheen)"/>'
@@ -837,7 +837,7 @@ BUILDERS = ("identity", "signal", "contributions", "arsenal", "trajectory", "mis
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Render the Aqua Launch profile assets.")
+    parser = argparse.ArgumentParser(description="Render the Pretty GitHub profile assets.")
     parser.add_argument("--demo", action="store_true", help="use deterministic offline data")
     parser.add_argument("--only", nargs="+", choices=BUILDERS, help="render a subset of panels")
     args = parser.parse_args()
@@ -868,7 +868,7 @@ def main() -> int:
     for name in args.only or BUILDERS:
         (ASSETS / f"{name}.svg").write_text(renderers[name](), encoding="utf-8")
         print(f"  · assets/{name}.svg")
-    print(f"Aqua Launch assets generated for @{username}")
+    print(f"Pretty GitHub assets generated for @{username}")
     return 0
 
 

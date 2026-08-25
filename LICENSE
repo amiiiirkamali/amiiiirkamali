@@ -1,13 +1,13 @@
 Pretty GitHub
-Copyright (c) 2026 Arta Bidkhori
+Copyright (c) 2026 Amirreza Kamali
 
 Scope notice
 
 The MIT License below applies to the source code, generators, documentation,
 and reusable template artwork in this repository.
 
-Personal portrait source files under Jenesyx/ and Aqua-Launch/, and the personal
-likeness encoded in their generated SVG previews, are example content and are
+The personal portrait source file under assets/profile-source.png, and the personal
+likeness encoded in its generated SVG previews, are example content and are
 not licensed for reuse as another person's identity. The surrounding template
 layouts and generator code remain covered by the MIT License. You may view the
 example portraits as part of the repository preview, but you must replace the

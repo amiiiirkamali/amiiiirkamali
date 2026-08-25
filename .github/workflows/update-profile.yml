@@ -1,4 +1,4 @@
-name: Aqua Launch — refresh profile assets
+name: Pretty GitHub — refresh profile assets
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
     paths:
       - "config.json"
       - "scripts/**"
-      - ".github/workflows/aqua-launch.yml"
+      - ".github/workflows/update-profile.yml"
   schedule:
     # 05:43 UTC daily — offset from the hour so the runner queue is short
     - cron: "43 5 * * *"
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: aqua-launch
+  group: pretty-github
   cancel-in-progress: true
 
 jobs:
@@ -52,5 +52,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add assets
-          git commit -m "chore: refresh Aqua Launch telemetry"
+          git commit -m "chore: refresh Pretty GitHub telemetry"
           git push

@@ -88,5 +88,5 @@ python scripts/generate.py --only missions # rebuild a single panel
 </details>
 
 <div align="center">
-<sub><code>aqua launch</code> · assets regenerated daily · built by Amirreza Kamali</sub>
+<sub><code>pretty github</code> · assets regenerated daily · built by Amirreza Kamali (@amiiiirkamali)</sub>
 </div>
